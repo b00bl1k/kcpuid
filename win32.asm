@@ -21,27 +21,68 @@ ID_STATIC_CODE_VALUE = 105
 section '.text' code readable executable
 
   start:
+        ; initialize heap
         invoke  GetProcessHeap
         test    eax, eax
         jz      exit
         mov     [cur_heap], eax
+        ; obtain command line arguments
+        invoke  GetCommandLineW
+        invoke  CommandLineToArgvW, eax, argc
+        test    eax, eax
+        jz      exit
+        mov     [argv], eax
+        mov     eax, [argc]
+        ;cmp     eax, 2
+        ;jz      .load_from_file
+        cmp     eax, 3
+        jnz     no_dump
+        mov     esi, [argv]
+        mov     esi, [esi + 4]
+        lodsd
+        cmp     eax, 0x0064002D ; utf-16 "-d"
+        jz      do_dump
+        cmp     eax, 0x0044002D ; utf-16 "-D"
+        jz      do_dump
+        jmp     no_dump
+
+  do_dump:
+        mov     eax, [argv]
+        mov     eax, [eax + 8]
+        stdcall DumpToFile, eax
+        jmp     exit
+
+  no_dump:
+        lea     eax, [ci]
+        stdcall CpuidInit, eax
+        invoke  GetModuleHandle, 0
+        invoke  DialogBoxParam, eax, 37, HWND_DESKTOP, DialogProc, 0
+        or      eax, eax
+        jz      exit
+
+  exit:
+        invoke  ExitProcess, 0
+
+proc DumpToFile file:DWORD
         ; how much memory need
         stdcall CpuidDump, 0, 0
         ; allocate it
         invoke  HeapAlloc, [cur_heap], 0, eax
         test    eax, eax
-        jz      exit
+        jz      .return
         mov     [dump], eax
         stdcall CpuidDump, [dump], 0
         mov     [dump_size], eax
 
         ; open file dor dump
-        invoke  CreateFile, dump_file, GENERIC_WRITE, 0, NULL, \
+        mov     eax, [file]
+        invoke  CreateFileW, eax, GENERIC_WRITE, 0, NULL, \
                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL
         cmp     eax, INVALID_HANDLE_VALUE
         jz      .free
         mov     [dump_handle], eax
 
+        push    esi edi
         mov     esi, [dump]
   @@:
         call    foutput
@@ -52,24 +93,16 @@ section '.text' code readable executable
         add     edi, [dump_size]
         cmp     esi, edi
         jl      @b
-
+        pop     edi esi
         invoke  CloseHandle, [dump_handle]
 
   .free:
         invoke  HeapFree, [cur_heap], 0, [dump]
+  .return:
+        ret
+endp
 
-        lea     eax, [ci]
-        stdcall CpuidInit, eax
-
-        invoke  GetModuleHandle, 0
-        invoke  DialogBoxParam, eax, 37, HWND_DESKTOP, DialogProc, 0
-        or      eax, eax
-        jz      exit
-
-  exit:
-        invoke  ExitProcess, 0
-
-  eax2hex:
+eax2hex:
         push    eax ebx edx
         mov     byte [edi + ecx], 0 ; zero terminate
         mov     ebx, 16
@@ -87,7 +120,7 @@ section '.text' code readable executable
         pop     edx ebx eax
         ret
 
-  foutput:
+foutput:
         pusha
         mov     edi, output
         xor     eax, eax
@@ -173,14 +206,21 @@ section '.bss' readable writeable
   dwtemp dd ?
   output rb 128
   hex_str rb 10
+  argc dd ?
+  argv dd ?
 
 section '.idata' import data readable writeable
 
   library kernel32, 'kernel32.dll', \
-          user32, 'user32.dll'
+          user32, 'user32.dll', \
+          shell32, 'shell32.dll'
 
   include 'api\kernel32.inc'
   include 'api\user32.inc'
+
+  import shell32, \
+         CommandLineToArgvW, 'CommandLineToArgvW'
+
   include 'common.inc'
   include 'intel.inc'
   include 'amd.inc'

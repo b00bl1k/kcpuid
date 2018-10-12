@@ -28,13 +28,13 @@ struct cpuid_info
         codename dd ?
 ends
 
-; __stdcall u32 CpuidCall(cpuid_regs * regs)
-proc CpuidCall, regs:DWORD
+; __stdcall u32 CpuidCall(u32 leaf, u32 subleaf, cpuid_regs * regs)
+proc CpuidCall, leaf:DWORD, subleaf:DWORD, regs:DWORD
         push    ebx esi
-        mov     esi, [regs]
-        mov     eax, [esi + cpuid_regs.r_eax]
-        mov     ecx, [esi + cpuid_regs.r_ecx]
+        mov     eax, [leaf]
+        mov     ecx, [subleaf]
         cpuid
+        mov     esi, [regs]
         mov     [esi + cpuid_regs.r_eax], eax
         mov     [esi + cpuid_regs.r_ebx], ebx
         mov     [esi + cpuid_regs.r_ecx], ecx
@@ -122,9 +122,8 @@ locals
 endl
         push    ebx esi edi
         ; obtain name
-        mov     [regs + cpuid_regs.r_eax], 0
         lea     eax, [regs]
-        stdcall CpuidCall, eax
+        stdcall CpuidCall, 0, 0, eax
         ; store maximum number of leaf
         mov     [max_leaf], eax
         ; store name of vendor [ebx:edx:ecx]
@@ -143,9 +142,8 @@ endl
         xor     eax, eax
         stosb
         ; processor info
-        mov     [regs + cpuid_regs.r_eax], 1
         lea     eax, [regs]
-        stdcall CpuidCall, eax
+        stdcall CpuidCall, 1, 0, eax
         mov     eax, [regs + cpuid_regs.r_eax]
         mov     ebx, [info]
         ; stepping [3:0]
@@ -178,13 +176,11 @@ endl
         mov     [ebx + cpuid_info.efamily], cl
         ; obtain brand name
         mov     esi, 0x80000002
-        mov     [regs + cpuid_regs.r_ecx], 0
         lea     edi, [ebx + cpuid_info.brand]
   @@:
         ; call in loop, three times
-        mov     [regs + cpuid_regs.r_eax], esi
         lea     eax, [regs]
-        stdcall CpuidCall, eax
+        stdcall CpuidCall, esi, 0, eax
         mov     eax, [regs + cpuid_regs.r_eax]
         stosd
         mov     eax, [regs + cpuid_regs.r_ebx]
@@ -258,10 +254,8 @@ endl
         xor     esi, esi
         mov     [length], ebx
   .read:
-        mov     [regs + cpuid_regs.r_eax], ebx
-        mov     [regs + cpuid_regs.r_ecx], esi
         lea     eax, [regs]
-        stdcall CpuidCall, eax
+        stdcall CpuidCall, ebx, esi, eax
         ; save result
         lea     eax, [regs]
         stdcall AppendRegs, edi, ebx, esi, eax
