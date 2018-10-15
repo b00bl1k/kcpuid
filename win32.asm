@@ -9,6 +9,7 @@ format PE GUI 4.0
 entry start
 
 include 'win32a.inc'
+include '../../string.inc'
 include 'cpuid.inc'
 
 ID_STATIC_VENDOR_TITLE = 100
@@ -20,7 +21,12 @@ ID_STATIC_CODE_VALUE = 105
 
 section '.text' code readable executable
 
-  start:
+start:
+        ; bind to first core
+        invoke  GetCurrentProcess
+        invoke  SetProcessAffinityMask, eax, 1
+        invoke  Sleep, 0
+
         ; initialize heap
         invoke  GetProcessHeap
         test    eax, eax
@@ -33,26 +39,34 @@ section '.text' code readable executable
         jz      exit
         mov     [argv], eax
         mov     eax, [argc]
-        ;cmp     eax, 2
-        ;jz      .load_from_file
+        cmp     eax, 2
+        jz      from_file
         cmp     eax, 3
-        jnz     no_dump
+        jz      to_file
+        jmp     dlg
+
+from_file:
+        mov     eax, [argv]
+        mov     eax, [eax + 4]
+        stdcall DumpFromFile, eax
+        jmp     exit
+
+to_file:
         mov     esi, [argv]
         mov     esi, [esi + 4]
         lodsd
         cmp     eax, 0x0064002D ; utf-16 "-d"
-        jz      do_dump
+        jz      @f
         cmp     eax, 0x0044002D ; utf-16 "-D"
-        jz      do_dump
-        jmp     no_dump
-
-  do_dump:
-        mov     eax, [argv]
-        mov     eax, [eax + 8]
-        stdcall DumpToFile, eax
+        jz      @f
+        jmp     exit
+@@:
+        mov     esi, [argv]
+        mov     esi, [esi + 8]
+        stdcall DumpToFile, esi
         jmp     exit
 
-  no_dump:
+dlg:
         lea     eax, [ci]
         stdcall CpuidInit, eax
         invoke  GetModuleHandle, 0
@@ -60,7 +74,7 @@ section '.text' code readable executable
         or      eax, eax
         jz      exit
 
-  exit:
+exit:
         invoke  ExitProcess, 0
 
 proc DumpToFile file:DWORD
@@ -85,10 +99,10 @@ proc DumpToFile file:DWORD
         push    esi edi
         mov     esi, [dump]
   @@:
-        call    foutput
+        stdcall DumpToStr, esi, output
+        mov     esi, eax
         invoke  lstrlen, output
         invoke  WriteFile, [dump_handle], output, eax, dwtemp, NULL
-        add     esi, 24
         mov     edi, [dump]
         add     edi, [dump_size]
         cmp     esi, edi
@@ -96,67 +110,53 @@ proc DumpToFile file:DWORD
         pop     edi esi
         invoke  CloseHandle, [dump_handle]
 
-  .free:
+.free:
         invoke  HeapFree, [cur_heap], 0, [dump]
-  .return:
+.return:
         ret
 endp
 
-eax2hex:
-        push    eax ebx edx
-        mov     byte [edi + ecx], 0 ; zero terminate
-        mov     ebx, 16
-  .l:
-        xor     edx, edx
-        div     ebx
-        add     edx, "0"
-        cmp     edx, "9"
-        jbe     @f
-        add     edx, "A" - "9" - 1
-  @@:
-        mov     [edi + ecx - 1], dl
-        sub     ecx, 1
-        jne     .l
-        pop     edx ebx eax
+proc DumpFromFile file:DWORD
+locals
+        hfile   dd ?
+        fsize   dd ?
+        buf     dd ?
+        rdbytes dd ?
+endl
+        ; open file and read it contents
+        invoke  CreateFileW, [file], GENERIC_READ, FILE_SHARE_READ, NULL, \
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL
+        cmp     eax, INVALID_HANDLE_VALUE
+        jz      .err
+        mov     [hfile], eax
+
+        invoke  GetFileSize, eax, 0
+        cmp     eax, -1
+        jz      .close
+        mov     [fsize], eax
+
+        invoke  HeapAlloc, [cur_heap], 0, eax
+        test    eax, eax
+        jz      .close
+        mov     [buf], eax
+
+        lea     eax, [fsize]
+        invoke  ReadFile, [hfile], [buf], [fsize], eax, 0
+        test    eax, eax
+        jz      .free
+
+        stdcall DumpParse, [buf], 0
+.free:
+        invoke  HeapFree, [cur_heap], 0, [buf]
+.close:
+        invoke  CloseHandle, [hfile]
+.err:
+        or      eax, -1
+        jmp     .exit
+
+.exit:
         ret
-
-foutput:
-        pusha
-        mov     edi, output
-        xor     eax, eax
-        stosb
-
-        invoke  lstrcat, output, cpuid_line
-
-        lodsd ; eax arg
-        mov     edi, hex_str
-        mov     ecx, 8
-        call    eax2hex
-        invoke  lstrcat, output, hex_str
-        invoke  lstrcat, output, colon
-
-        lodsd ; ecx arg
-        mov     edi, hex_str
-        mov     ecx, 2
-        call    eax2hex
-        invoke  lstrcat, output, hex_str
-        invoke  lstrcat, output, equal
-
-        mov     ecx, 4
-  @@:
-        lodsd
-        push    ecx
-        mov     edi, hex_str
-        mov     ecx, 8
-        call    eax2hex
-        invoke  lstrcat, output, hex_str
-        invoke  lstrcat, output, space
-        pop     ecx
-        loop    @b
-
-        invoke  lstrcat, output, crlf
-        popa
-        ret
+endp
 
 proc DialogProc hwnddlg, msg, wparam, lparam
         push    ebx esi edi
@@ -205,7 +205,6 @@ section '.bss' readable writeable
   dump_handle dd ?
   dwtemp dd ?
   output rb 128
-  hex_str rb 10
   argc dd ?
   argv dd ?
 
@@ -224,13 +223,6 @@ section '.idata' import data readable writeable
   include 'common.inc'
   include 'intel.inc'
   include 'amd.inc'
-
-  dump_file db 'cpuid.txt', 0
-  cpuid_line db 'CPUID ', 0
-  crlf db 13, 10, 0
-  colon db ":", 0
-  equal db " = ", 0
-  space db " ", 0
 
 section '.rsrc' resource data readable
 

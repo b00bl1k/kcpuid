@@ -5,6 +5,8 @@
 ;;                                                                 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+dump_cpuid db 'CPUID ', 0
+
 winmain_title db 'kcpuid', 0
 vendor_title db 'Vendor:', 0
 brand_title db 'Brand:', 0

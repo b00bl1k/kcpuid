@@ -362,3 +362,77 @@ endl
         pop     edi esi ebx
         ret
 endp
+
+proc ToHex, num:DWORD, len:DWORD, dst:DWORD
+        push    ebx edi
+        mov     eax, [num]
+        mov     ebx, 16
+        mov     ecx, [len]
+        mov     edi, [dst]
+.l:
+        xor     edx, edx
+        div     ebx
+        add     edx, "0"
+        cmp     edx, "9"
+        jbe     @f
+        add     edx, "A" - "9" - 1
+@@:
+        mov     [edi + ecx - 1], dl
+        sub     ecx, 1
+        jne     .l
+        pop     edi ebx
+        ret
+endp
+
+; src is 24 bytes array contains leaf, subleaf, eax, ebx, ecx and edx values
+; dst is a buffer for string output (at least 60 bytes)
+; return pointer to the end of src
+proc DumpToStr, src:DWORD, dst:DWORD
+        push    esi edi
+
+        stdcall string.copy, dump_cpuid, [dst]
+        stdcall string.length, [dst]
+        add     eax, [dst]
+        mov     edi, eax
+
+        mov     esi, [src]
+
+        lodsd
+        stdcall ToHex, eax, 8, edi
+        add     edi, 8
+        mov     ax, ' :'
+        stosw
+        mov     al, ' '
+        stosb
+
+        lodsd
+        stdcall ToHex, eax, 2, edi
+        add     edi, 2
+        mov     ax, ' ='
+        stosw
+
+        mov     ecx, 4
+  @@:
+        mov     al, ' '
+        stosb
+        lodsd
+        push    ecx
+        stdcall ToHex, eax, 8, edi
+        add     edi, 8
+        pop     ecx
+        loop    @b
+
+        mov     al, 13
+        stosb
+        mov     al, 10
+        stosb
+
+        mov     eax, esi
+        pop     edi esi
+        ret
+endp
+
+proc DumpParse, src:DWORD, dst:DWORD
+
+        ret
+endp
