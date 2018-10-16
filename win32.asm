@@ -43,13 +43,17 @@ start:
         jz      from_file
         cmp     eax, 3
         jz      to_file
+        xor     eax, eax
+        mov     [dump], eax
         jmp     dlg
 
 from_file:
         mov     eax, [argv]
         mov     eax, [eax + 4]
         stdcall DumpFromFile, eax
-        jmp     exit
+        test    eax, eax
+        jnz     exit
+        jmp     dlg
 
 to_file:
         mov     esi, [argv]
@@ -68,7 +72,7 @@ to_file:
 
 dlg:
         lea     eax, [ci]
-        stdcall CpuidInit, eax
+        stdcall CpuidInit, eax, [dump]
         invoke  GetModuleHandle, 0
         invoke  DialogBoxParam, eax, 37, HWND_DESKTOP, DialogProc, 0
         or      eax, eax
@@ -146,15 +150,29 @@ endl
         jz      .free
 
         stdcall DumpParse, [buf], 0
+        test    eax, eax
+        jz      .free
+
+        mov     ecx, 24
+        mul     ecx
+        invoke  HeapAlloc, [cur_heap], 0, eax
+        test    eax, eax
+        jz      .free
+
+        mov     [dump], eax
+        stdcall DumpParse, [buf], [dump]
+
+        invoke  HeapFree, [cur_heap], 0, [buf]
+        invoke  CloseHandle, [hfile]
+        xor     eax, eax
+        ret
+
 .free:
         invoke  HeapFree, [cur_heap], 0, [buf]
 .close:
         invoke  CloseHandle, [hfile]
 .err:
         or      eax, -1
-        jmp     .exit
-
-.exit:
         ret
 endp
 
@@ -183,16 +201,21 @@ proc DialogProc hwnddlg, msg, wparam, lparam
 
         jmp     .processed
 
-  .wmcommand:
+.wmcommand:
         jmp     .processed
 
-  .wmclose:
+.wmclose:
+        mov     eax, [dump]
+        test    eax, eax
+        jz      @f
+        invoke  HeapFree, [cur_heap], 0, [dump]
+@@:
         invoke  EndDialog, [hwnddlg], 0
 
-  .processed:
+.processed:
         mov     eax, 1
 
-  .finish:
+.finish:
         pop     edi esi ebx
         ret
 endp

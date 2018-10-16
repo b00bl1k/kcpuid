@@ -28,18 +28,48 @@ struct cpuid_info
         codename dd ?
 ends
 
-; __stdcall u32 CpuidCall(u32 leaf, u32 subleaf, cpuid_regs * regs)
-proc CpuidCall, leaf:DWORD, subleaf:DWORD, regs:DWORD
-        push    ebx esi
+; __stdcall u32 CpuidCall(const u32 * dump, u32 leaf, u32 subleaf, cpuid_regs * regs)
+proc CpuidCall uses ebx esi, dump:DWORD, leaf:DWORD, subleaf:DWORD, regs:DWORD
+        mov     esi, [dump]
+        test    esi, esi
+        mov     ecx, 50 ; TODO fix me
+        jnz     .from_dump
         mov     eax, [leaf]
         mov     ecx, [subleaf]
         cpuid
+        jmp     .result
+
+.from_dump:
+        lodsd
+        cmp     eax, [leaf]
+        jz      @f
+        add     esi, 20
+        jmp     .from_dump
+@@:
+        lodsd
+        cmp     eax, [subleaf]
+        jz      @f
+        add     esi, 16
+        loop    .from_dump
+        mov     eax, 0x40000000
+        jmp     .result ; TODO fix me
+@@:
+        lodsd
+        push    eax
+        lodsd
+        mov     ebx, eax
+        lodsd
+        mov     ecx, eax
+        lodsd
+        mov     edx, eax
+        pop     eax
+
+.result:
         mov     esi, [regs]
         mov     [esi + cpuid_regs.r_eax], eax
         mov     [esi + cpuid_regs.r_ebx], ebx
         mov     [esi + cpuid_regs.r_ecx], ecx
         mov     [esi + cpuid_regs.r_edx], edx
-        pop     esi ebx
         ret
 endp
 
@@ -113,8 +143,8 @@ proc AmdDecode, info:DWORD
         ret
 endp
 
-; __stdcall void CpuidInit(cpuid_info * info)
-proc CpuidInit, info:DWORD
+; __stdcall void CpuidInit(cpuid_info * info, const u32 * dump)
+proc CpuidInit, info:DWORD, dump:DWORD
 locals
         max_leaf dd ?
         max_ext_leaf dd ?
@@ -123,7 +153,7 @@ endl
         push    ebx esi edi
         ; obtain name
         lea     eax, [regs]
-        stdcall CpuidCall, 0, 0, eax
+        stdcall CpuidCall, [dump], 0, 0, eax
         ; store maximum number of leaf
         mov     [max_leaf], eax
         ; store name of vendor [ebx:edx:ecx]
@@ -143,7 +173,7 @@ endl
         stosb
         ; processor info
         lea     eax, [regs]
-        stdcall CpuidCall, 1, 0, eax
+        stdcall CpuidCall, [dump], 1, 0, eax
         mov     eax, [regs + cpuid_regs.r_eax]
         mov     ebx, [info]
         ; stepping [3:0]
@@ -180,7 +210,7 @@ endl
   @@:
         ; call in loop, three times
         lea     eax, [regs]
-        stdcall CpuidCall, esi, 0, eax
+        stdcall CpuidCall, [dump], esi, 0, eax
         mov     eax, [regs + cpuid_regs.r_eax]
         stosd
         mov     eax, [regs + cpuid_regs.r_ebx]
@@ -217,7 +247,7 @@ endl
         ret
 endp
 
-proc AppendRegs, dst:DWORD, r_eax:DWORD, r_ecx:DWORD, regs:DWORD
+proc AppendRegs dst:DWORD, r_eax:DWORD, r_ecx:DWORD, regs:DWORD
         mov     eax, [dst]
         test    eax, eax
         jz      .nothing
@@ -240,7 +270,7 @@ proc AppendRegs, dst:DWORD, r_eax:DWORD, r_ecx:DWORD, regs:DWORD
 endp
 
 ; __stdcall u32 CpuidDump(void * dst, u32 size)
-proc CpuidDump, dst:DWORD, size:DWORD
+proc CpuidDump dst:DWORD, size:DWORD
 locals
         length  dd ?
         max_leaf dd ?
@@ -363,7 +393,7 @@ endl
         ret
 endp
 
-proc ToHex, num:DWORD, len:DWORD, dst:DWORD
+proc ToHex num:DWORD, len:DWORD, dst:DWORD
         push    ebx edi
         mov     eax, [num]
         mov     ebx, 16
@@ -384,12 +414,52 @@ proc ToHex, num:DWORD, len:DWORD, dst:DWORD
         ret
 endp
 
+; src -> pointer to string
+; result -> pointer to store result
+; return -> pointer to the first not valid symbol
+proc FromHex src:DWORD, result:DWORD
+        push    esi
+        mov     esi, [src]
+        xor     edx, edx
+.next:
+        xor     eax, eax
+        lodsb
+        cmp     al, '0'
+        jl      .exit
+        cmp     al, '9'
+        ja      @f
+        sub     al, '0'
+        jmp     .ok
+@@:
+        cmp     al, 'A'
+        jl      .exit
+        cmp     al, 'F'
+        ja      @f
+        sub     al, 'A' - 10
+        jmp     .ok
+@@:
+        cmp     al, 'a'
+        jl      .exit
+        cmp     al, 'f'
+        ja      .exit
+        sub     al, 'a' - 10
+.ok:
+        shl     edx, 4
+        add     edx, eax
+        jmp     .next
+.exit:
+        mov     eax, esi
+        dec     eax
+        mov     esi, [result]
+        mov     [esi], edx
+        pop     esi
+        ret
+endp
+
 ; src is 24 bytes array contains leaf, subleaf, eax, ebx, ecx and edx values
 ; dst is a buffer for string output (at least 60 bytes)
 ; return pointer to the end of src
-proc DumpToStr, src:DWORD, dst:DWORD
-        push    esi edi
-
+proc DumpToStr uses esi edi, src:DWORD, dst:DWORD
         stdcall string.copy, dump_cpuid, [dst]
         stdcall string.length, [dst]
         add     eax, [dst]
@@ -428,11 +498,83 @@ proc DumpToStr, src:DWORD, dst:DWORD
         stosb
 
         mov     eax, esi
-        pop     edi esi
         ret
 endp
 
-proc DumpParse, src:DWORD, dst:DWORD
 
+proc DumpParse uses ebx esi edi, src:DWORD, dst:DWORD
+locals
+        num     dd ?
+        lines   dd ?
+endl
+        mov     esi, [src]
+        mov     edi, [dst]
+        mov     [lines], 0
+.next:
+        cmp     byte [esi], 0
+        jz      .exit
+
+        stdcall string.length, dump_cpuid
+        mov     ebx, eax
+        stdcall string.cmp, esi, dump_cpuid, eax
+        test    eax, eax
+        jnz     .err
+        ; parse leaf number
+        add     esi, ebx
+        lea     eax, [num]
+        stdcall FromHex, esi, eax
+        mov     esi, eax
+        lodsb
+        cmp     al, ':'
+        jnz     .err
+        ; parse subleaf number
+        ; save
+        test    edi, edi
+        jz      @f
+        mov     eax, [num]
+        stosd
+@@:
+        lea     eax, [num]
+        stdcall FromHex, esi, eax
+        mov     esi, eax
+        lodsb
+        cmp     al, ' '
+        jnz     .err
+        lodsb
+        cmp     al, '='
+        jnz     .err
+        ; parse cpuid results
+        mov     ecx, 4
+@@:
+        lodsb
+        cmp     al, ' '
+        jnz     .err
+        ; save
+        test    edi, edi
+        jz      .b0
+        mov     eax, [num]
+        stosd
+.b0:
+        lea     eax, [num]
+        stdcall FromHex, esi, eax
+        mov     esi, eax
+        loop    @b
+        lodsb
+        cmp     al, 13
+        jnz     .err
+        lodsb
+        cmp     al, 10
+        jnz     .err
+        inc     [lines]
+        test    edi, edi
+        jz      .b1
+        mov     eax, [num]
+        stosd
+.b1:
+        jmp     .next
+
+.exit:
+.err:
+        mov     eax, [lines]
         ret
 endp
