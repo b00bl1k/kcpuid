@@ -92,7 +92,7 @@ proc DumpToFile file:DWORD
         stdcall CpuidDump, [dump], 0
         mov     [dump_size], eax
 
-        ; open file dor dump
+        ; open file for dump
         mov     eax, [file]
         invoke  CreateFileW, eax, GENERIC_WRITE, 0, NULL, \
                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL

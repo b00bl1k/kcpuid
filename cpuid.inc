@@ -285,7 +285,7 @@ endl
         mov     [length], ebx
   .read:
         lea     eax, [regs]
-        stdcall CpuidCall, ebx, esi, eax
+        stdcall CpuidCall, 0, ebx, esi, eax
         ; save result
         lea     eax, [regs]
         stdcall AppendRegs, edi, ebx, esi, eax
@@ -470,9 +470,7 @@ proc DumpToStr uses esi edi, src:DWORD, dst:DWORD
         lodsd
         stdcall ToHex, eax, 8, edi
         add     edi, 8
-        mov     ax, ' :'
-        stosw
-        mov     al, ' '
+        mov     al, ':'
         stosb
 
         lodsd
